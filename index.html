@@ -231,8 +231,40 @@ canvas { display: block; }
 .btn { border: none; border-radius: 10px; cursor: pointer; font-family: 'Noto Sans JP', sans-serif; font-weight: 500; font-size: 13px; padding: 10px 16px; transition: opacity 0.15s; white-space: nowrap; }
 .btn-primary   { background: var(--accent); color: #fff; }
 .btn-secondary { background: var(--bg3); color: var(--text2); border: 1px solid var(--border); }
+.btn-danger    { background: #fef0ee; color: var(--red); border: 1px solid #f5c6c6; }
 .btn-sm   { padding: 7px 12px; font-size: 12px; }
 .btn-full { width: 100%; }
+
+/* Modal */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+  z-index: 200; display: flex; align-items: flex-end; justify-content: center;
+  opacity: 0; pointer-events: none; transition: opacity 0.2s;
+}
+.modal-overlay.show { opacity: 1; pointer-events: all; }
+.modal {
+  background: var(--bg2); border-radius: 20px 20px 0 0;
+  padding: 20px 16px calc(24px + var(--safe-bottom));
+  width: 100%; max-width: 480px;
+  transform: translateY(100%); transition: transform 0.25s cubic-bezier(.4,0,.2,1);
+  box-shadow: 0 -4px 24px rgba(0,0,0,0.12);
+}
+.modal-overlay.show .modal { transform: translateY(0); }
+.modal-title { font-size: 15px; font-weight: 700; margin-bottom: 16px; }
+.modal-field { margin-bottom: 12px; }
+.modal-label { font-size: 11px; color: var(--text3); margin-bottom: 4px; }
+.modal-input {
+  width: 100%; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text); font-family: 'Noto Sans JP', sans-serif;
+  font-size: 14px; padding: 9px 12px; outline: none;
+  transition: border-color 0.15s;
+}
+.modal-input:focus { border-color: var(--accent2); }
+.modal-row { display: flex; gap: 8px; margin-top: 14px; }
+
+/* entry-item clickable */
+.entry-item { cursor: pointer; transition: background 0.12s; }
+.entry-item:active { background: var(--bg3); }
 </style>
 </head>
 <body>
@@ -876,17 +908,72 @@ function renderDetail() {
         const cls = type === 'expense' ? 'expense' : type === 'income' ? 'income' : 'transfer';
         const prefix = type === 'expense' ? '-¥' : type === 'income' ? '+¥' : '¥';
         const cat = getCategory(e);
-        return `<div class="entry-item">
+        const idx = entries.indexOf(e);
+        return `<div class="entry-item" onclick="openEditModal(${idx})">
           <div class="entry-header">
             <div style="flex:1;min-width:0;">
               <div class="entry-memo">${e.memo || '(摘要なし)'}</div>
               <div class="entry-sub">${cat}</div>
             </div>
-            <div class="entry-amt ${cls}">${prefix}${e.amount.toLocaleString()}</div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <div class="entry-amt ${cls}">${prefix}${e.amount.toLocaleString()}</div>
+              <span style="font-size:11px;color:var(--text3);">✏️</span>
+            </div>
           </div>
         </div>`;
       }).join('');
   }).join('');
+}
+
+// ==================== EDIT MODAL ====================
+let editingIdx = -1;
+
+function openEditModal(idx) {
+  editingIdx = idx;
+  const e = entries[idx];
+  document.getElementById('edit-date').value        = e.date;
+  document.getElementById('edit-memo').value        = e.memo || '';
+  document.getElementById('edit-amount').value      = e.amount;
+  document.getElementById('edit-debit-name').value  = e.debitName;
+  document.getElementById('edit-credit-name').value = e.creditName;
+  document.getElementById('edit-modal-overlay').classList.add('show');
+}
+
+function closeEditModal(event) {
+  if (event && event.target !== document.getElementById('edit-modal-overlay')) return;
+  document.getElementById('edit-modal-overlay').classList.remove('show');
+  editingIdx = -1;
+}
+
+function saveEntry() {
+  if (editingIdx < 0) return;
+  const e = entries[editingIdx];
+  e.date        = document.getElementById('edit-date').value;
+  e.memo        = document.getElementById('edit-memo').value;
+  e.amount      = parseInt(document.getElementById('edit-amount').value) || 0;
+  e.debitName   = document.getElementById('edit-debit-name').value;
+  e.creditName  = document.getElementById('edit-credit-name').value;
+  entries.sort((a, b) => a.date.localeCompare(b.date));
+  localStorage.setItem('kakeibo_entries', JSON.stringify(entries));
+  document.getElementById('edit-modal-overlay').classList.remove('show');
+  editingIdx = -1;
+  updateDataRange();
+  renderHome();
+  renderDetail();
+  showToast('更新しました ✓');
+}
+
+function deleteEntry() {
+  if (editingIdx < 0) return;
+  if (!confirm('この仕訳を削除しますか？')) return;
+  entries.splice(editingIdx, 1);
+  localStorage.setItem('kakeibo_entries', JSON.stringify(entries));
+  document.getElementById('edit-modal-overlay').classList.remove('show');
+  editingIdx = -1;
+  updateDataRange();
+  renderHome();
+  renderDetail();
+  showToast('削除しました');
 }
 
 // ==================== B/S ====================
@@ -1047,6 +1134,40 @@ function init() {
 
 init();
 </script>
+<!-- ============ EDIT MODAL ============ -->
+<div class="modal-overlay" id="edit-modal-overlay" onclick="closeEditModal(event)">
+  <div class="modal">
+    <div class="modal-title">仕訳を編集</div>
+    <div class="modal-field">
+      <div class="modal-label">日付</div>
+      <input class="modal-input" type="date" id="edit-date">
+    </div>
+    <div class="modal-field">
+      <div class="modal-label">摘要</div>
+      <input class="modal-input" type="text" id="edit-memo" placeholder="摘要">
+    </div>
+    <div class="modal-field">
+      <div class="modal-label">金額</div>
+      <input class="modal-input" type="number" id="edit-amount" placeholder="金額">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+      <div class="modal-field">
+        <div class="modal-label">借方科目</div>
+        <input class="modal-input" type="text" id="edit-debit-name" placeholder="借方科目名">
+      </div>
+      <div class="modal-field">
+        <div class="modal-label">貸方科目</div>
+        <input class="modal-input" type="text" id="edit-credit-name" placeholder="貸方科目名">
+      </div>
+    </div>
+    <div class="modal-row">
+      <button class="btn btn-danger btn-sm" onclick="deleteEntry()">削除</button>
+      <button class="btn btn-secondary btn-sm" style="flex:1" onclick="closeEditModal()">キャンセル</button>
+      <button class="btn btn-primary btn-sm" style="flex:1" onclick="saveEntry()">保存</button>
+    </div>
+  </div>
+</div>
+
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
