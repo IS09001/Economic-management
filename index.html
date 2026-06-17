@@ -935,39 +935,63 @@ function renderBS() {
     balances[code] = { name, dr, cr, net: dr - cr };
   });
 
-  const sections = [
-    { label: '資産', codes: [1], color: 'var(--accent2)' },
-    { label: '負債', codes: [2], color: 'var(--accent3)' },
-    { label: '純資産', codes: [3], color: 'var(--purple)' },
-    { label: '収益累計', codes: [4], color: 'var(--accent)' },
-    { label: '費用累計', codes: [5], color: 'var(--yellow)' },
+  // 複式簿記レイアウト: 左=借方(資産・費用累計) / 右=貸方(負債・純資産・収益累計)
+  const leftSecs  = [
+    { label: '資産',     codes: [1], color: 'var(--accent2)' },
+    { label: '費用累計', codes: [5], color: 'var(--yellow)'  },
+  ];
+  const rightSecs = [
+    { label: '負債',     codes: [2], color: 'var(--accent3)' },
+    { label: '純資産',   codes: [3], color: 'var(--purple)'  },
+    { label: '収益累計', codes: [4], color: 'var(--accent)'  },
   ];
 
-  let html = '';
-  sections.forEach(sec => {
-    const items = [...allCodes]
-      .filter(c => sec.codes.includes(Math.floor(c / 100)))
-      .map(c => ({ code: c, ...balances[c] }))
-      .filter(i => i.net !== 0)
-      .sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
-    if (!items.length) return;
-    const secTotal = items.reduce((s, i) => s + i.net, 0);
-    html += `<div style="margin-bottom:14px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:2px solid ${sec.color};margin-bottom:6px;">
-        <span style="font-size:12px;font-weight:700;color:${sec.color};">${sec.label}</span>
-        <span style="font-family:'Space Mono',monospace;font-size:13px;font-weight:700;color:${sec.color};">¥${Math.abs(secTotal).toLocaleString()}</span>
-      </div>`;
-    items.forEach(i => {
-      const sign = i.net >= 0 ? '' : '-';
-      html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;border-bottom:1px solid var(--border);">
-        <span style="font-size:12px;color:var(--text);">${i.name}</span>
-        <span style="font-family:'Space Mono',monospace;font-size:12px;color:var(--text2);">${sign}¥${Math.abs(i.net).toLocaleString()}</span>
-      </div>`;
+  function buildCol(secs) {
+    let html = ''; let colTotal = 0;
+    secs.forEach(sec => {
+      const items = [...allCodes]
+        .filter(c => sec.codes.includes(Math.floor(c / 100)))
+        .map(c => ({ code: c, ...balances[c] }))
+        .filter(i => i.net !== 0)
+        .sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
+      if (!items.length) return;
+      const secTotal = items.reduce((s, i) => s + i.net, 0);
+      colTotal += Math.abs(secTotal);
+      html += `<div style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:2px solid ${sec.color};margin-bottom:4px;">
+          <span style="font-size:11px;font-weight:700;color:${sec.color};">${sec.label}</span>
+          <span style="font-family:'Space Mono',monospace;font-size:11px;font-weight:700;color:${sec.color};">¥${Math.abs(secTotal).toLocaleString()}</span>
+        </div>`;
+      items.forEach(i => {
+        const sign = i.net >= 0 ? '' : '-';
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 4px;border-bottom:1px solid var(--border);">
+          <span style="font-size:11px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60%;">${i.name}</span>
+          <span style="font-family:'Space Mono',monospace;font-size:10px;color:var(--text2);flex-shrink:0;">${sign}¥${Math.abs(i.net).toLocaleString()}</span>
+        </div>`;
+      });
+      html += `</div>`;
     });
-    html += `</div>`;
-  });
+    return { html, colTotal };
+  }
 
-  document.getElementById('bs-content').innerHTML = html || '<div class="empty">該当データなし</div>';
+  const left  = buildCol(leftSecs);
+  const right = buildCol(rightSecs);
+
+  const finalHtml = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start;">
+      <div>
+        <div style="font-size:10px;font-weight:700;color:var(--text3);letter-spacing:1px;text-align:center;padding:4px 0;background:var(--bg3);border-radius:6px;margin-bottom:8px;">借　方</div>
+        ${left.html || '<div style="color:var(--text3);font-size:11px;text-align:center;padding:8px;">データなし</div>'}
+        <div style="text-align:right;font-family:'Space Mono',monospace;font-size:11px;font-weight:700;color:var(--text2);padding:4px 0;border-top:2px solid var(--border);margin-top:4px;">合計 ¥${left.colTotal.toLocaleString()}</div>
+      </div>
+      <div>
+        <div style="font-size:10px;font-weight:700;color:var(--text3);letter-spacing:1px;text-align:center;padding:4px 0;background:var(--bg3);border-radius:6px;margin-bottom:8px;">貸　方</div>
+        ${right.html || '<div style="color:var(--text3);font-size:11px;text-align:center;padding:8px;">データなし</div>'}
+        <div style="text-align:right;font-family:'Space Mono',monospace;font-size:11px;font-weight:700;color:var(--text2);padding:4px 0;border-top:2px solid var(--border);margin-top:4px;">合計 ¥${right.colTotal.toLocaleString()}</div>
+      </div>
+    </div>`;
+
+  document.getElementById('bs-content').innerHTML = finalHtml;
 }
 
 // ==================== IMPORT ====================
