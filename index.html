@@ -835,7 +835,7 @@ function renderDetail() {
 function handleImport() {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.csv,text/csv';
+  input.accept = '.csv,.bin,text/csv,application/octet-stream,*/*';
   input.multiple = true;
   input.onchange = async e => {
     let newCount = 0;
