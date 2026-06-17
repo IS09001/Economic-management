@@ -265,6 +265,34 @@ canvas { display: block; }
 /* entry-item clickable */
 .entry-item { cursor: pointer; transition: background 0.12s; }
 .entry-item:active { background: var(--bg3); }
+
+/* FAB */
+.fab {
+  position: fixed; bottom: calc(72px + var(--safe-bottom) + 14px); right: 16px;
+  width: 52px; height: 52px; border-radius: 50%;
+  background: var(--accent); color: #fff; font-size: 26px; line-height: 1;
+  border: none; cursor: pointer; box-shadow: 0 4px 16px rgba(90,138,106,0.4);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 99; transition: transform 0.15s, box-shadow 0.15s;
+}
+.fab:active { transform: scale(0.93); box-shadow: 0 2px 8px rgba(90,138,106,0.3); }
+
+/* 科目チップ */
+.cat-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.cat-chip {
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 20px;
+  font-size: 12px; color: var(--text2); padding: 5px 12px; cursor: pointer;
+  font-family: 'Noto Sans JP', sans-serif; transition: all 0.12s;
+}
+.cat-chip.selected { background: var(--accent); color: #fff; border-color: var(--accent); }
+.cat-chip.income-chip.selected { background: var(--accent2); border-color: var(--accent2); }
+
+/* 入力モーダルタブ */
+.add-type-row { display: flex; background: var(--bg3); border-radius: 10px; padding: 3px; margin-bottom: 14px; }
+.add-type-btn { flex: 1; padding: 8px; border: none; background: none; font-family: 'Noto Sans JP', sans-serif; font-size: 13px; border-radius: 8px; cursor: pointer; color: var(--text2); }
+.add-type-btn.active { background: var(--bg2); font-weight: 600; color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.add-type-btn.expense.active { color: var(--accent3); }
+.add-type-btn.income.active  { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -280,6 +308,8 @@ canvas { display: block; }
 </div>
 
 <div class="toast" id="toast"></div>
+
+<button class="fab" onclick="openAddModal()">＋</button>
 
 <nav class="nav">
   <button class="nav-btn active" onclick="showScreen('home')" id="nav-home">
@@ -925,6 +955,118 @@ function renderDetail() {
   }).join('');
 }
 
+// ==================== ADD MODAL ====================
+let addType = 'expense';
+
+// エントリから科目一覧を動的に生成
+function getKnownCategories(type) {
+  const map = {};
+  entries.forEach(e => {
+    const t = classify(e);
+    if (t !== type) return;
+    const name = type === 'expense' ? e.debitName  : e.creditName;
+    const code = type === 'expense' ? e.debitCode  : e.creditCode;
+    const peerName = type === 'expense' ? e.creditName : e.debitName;
+    const peerCode = type === 'expense' ? e.creditCode : e.debitCode;
+    if (!map[name]) map[name] = { code, peerName, peerCode };
+  });
+  return map;
+}
+
+// デフォルト科目（CSVデータがない初期状態用）
+const DEFAULT_CATS = {
+  expense: [
+    { name:'食費',     code:501, peerName:'現金', peerCode:101 },
+    { name:'日用品',   code:502, peerName:'現金', peerCode:101 },
+    { name:'交通費',   code:503, peerName:'現金', peerCode:101 },
+    { name:'外食費',   code:504, peerName:'現金', peerCode:101 },
+    { name:'娯楽費',   code:505, peerName:'現金', peerCode:101 },
+    { name:'医療費',   code:506, peerName:'現金', peerCode:101 },
+    { name:'通信費',   code:507, peerName:'現金', peerCode:101 },
+    { name:'衣服費',   code:508, peerName:'現金', peerCode:101 },
+  ],
+  income: [
+    { name:'給料',     code:401, peerName:'普通預金', peerCode:102 },
+    { name:'お小遣い', code:402, peerName:'現金',     peerCode:101 },
+    { name:'雑収入',   code:403, peerName:'現金',     peerCode:101 },
+  ]
+};
+
+function setAddType(type) {
+  addType = type;
+  document.getElementById('add-type-expense').className = 'add-type-btn expense' + (type==='expense'?' active':'');
+  document.getElementById('add-type-income').className  = 'add-type-btn income'  + (type==='income' ?' active':'');
+  renderAddCatChips();
+}
+
+function renderAddCatChips() {
+  const known = getKnownCategories(addType);
+  let cats;
+  if (Object.keys(known).length > 0) {
+    cats = Object.entries(known).map(([name, v]) => ({ name, ...v }));
+  } else {
+    cats = DEFAULT_CATS[addType];
+  }
+  const chips = document.getElementById('add-cat-chips');
+  chips.innerHTML = cats.map(c =>
+    `<button class="cat-chip${addType==='income'?' income-chip':''}" data-name="${c.name}" data-code="${c.code}" data-peer-name="${c.peerName}" data-peer-code="${c.peerCode}" onclick="selectCatChip(this)">${c.name}</button>`
+  ).join('');
+}
+
+function selectCatChip(el) {
+  document.querySelectorAll('#add-cat-chips .cat-chip').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+}
+
+function openAddModal() {
+  addType = 'expense';
+  document.getElementById('add-type-expense').className = 'add-type-btn expense active';
+  document.getElementById('add-type-income').className  = 'add-type-btn income';
+  document.getElementById('add-date').value   = new Date().toISOString().slice(0,10);
+  document.getElementById('add-amount').value = '';
+  document.getElementById('add-memo').value   = '';
+  renderAddCatChips();
+  document.getElementById('add-modal-overlay').classList.add('show');
+  setTimeout(() => document.getElementById('add-amount').focus(), 300);
+}
+
+function closeAddModal(event) {
+  if (event && event.target !== document.getElementById('add-modal-overlay')) return;
+  document.getElementById('add-modal-overlay').classList.remove('show');
+}
+
+function submitAdd() {
+  const date   = document.getElementById('add-date').value;
+  const amount = parseInt(document.getElementById('add-amount').value);
+  const memo   = document.getElementById('add-memo').value.trim();
+  const chip   = document.querySelector('#add-cat-chips .cat-chip.selected');
+
+  if (!date)   { showToast('日付を入力してください'); return; }
+  if (!amount) { showToast('金額を入力してください'); return; }
+  if (!chip)   { showToast('科目を選択してください'); return; }
+
+  const catName   = chip.dataset.name;
+  const catCode   = parseInt(chip.dataset.code);
+  const peerName  = chip.dataset.peerName;
+  const peerCode  = parseInt(chip.dataset.peerCode);
+
+  let entry;
+  if (addType === 'expense') {
+    entry = { date, debitCode: catCode, debitName: catName, creditCode: peerCode, creditName: peerName, amount, memo };
+  } else {
+    entry = { date, debitCode: peerCode, debitName: peerName, creditCode: catCode, creditName: catName, amount, memo };
+  }
+
+  entries.push(entry);
+  entries.sort((a, b) => a.date.localeCompare(b.date));
+  localStorage.setItem('kakeibo_entries', JSON.stringify(entries));
+  document.getElementById('add-modal-overlay').classList.remove('show');
+  updateDataRange();
+  renderHome();
+  renderDetail();
+  showToast(`${addType==='expense'?'-':'+'} ¥${amount.toLocaleString()} 追加しました ✓`);
+}
+
 // ==================== EDIT MODAL ====================
 let editingIdx = -1;
 
@@ -1134,6 +1276,36 @@ function init() {
 
 init();
 </script>
+<!-- ============ ADD MODAL ============ -->
+<div class="modal-overlay" id="add-modal-overlay" onclick="closeAddModal(event)">
+  <div class="modal">
+    <div class="add-type-row">
+      <button class="add-type-btn expense active" id="add-type-expense" onclick="setAddType('expense')">支出</button>
+      <button class="add-type-btn income" id="add-type-income" onclick="setAddType('income')">収入</button>
+    </div>
+    <div class="modal-field">
+      <div class="modal-label">日付</div>
+      <input class="modal-input" type="date" id="add-date">
+    </div>
+    <div class="modal-field">
+      <div class="modal-label">金額</div>
+      <input class="modal-input" type="number" id="add-amount" placeholder="0" inputmode="numeric">
+    </div>
+    <div class="modal-field">
+      <div class="modal-label">科目</div>
+      <div class="cat-chips" id="add-cat-chips"></div>
+    </div>
+    <div class="modal-field">
+      <div class="modal-label">摘要（任意）</div>
+      <input class="modal-input" type="text" id="add-memo" placeholder="店名・品目など">
+    </div>
+    <div class="modal-row">
+      <button class="btn btn-secondary btn-sm" style="flex:1" onclick="closeAddModal()">キャンセル</button>
+      <button class="btn btn-primary btn-sm" style="flex:1" onclick="submitAdd()">追加</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============ EDIT MODAL ============ -->
 <div class="modal-overlay" id="edit-modal-overlay" onclick="closeEditModal(event)">
   <div class="modal">
