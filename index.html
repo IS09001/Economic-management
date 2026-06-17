@@ -260,6 +260,9 @@ canvas { display: block; }
   <button class="nav-btn" onclick="showScreen('detail')" id="nav-detail">
     <span class="nav-icon">📋</span>明細
   </button>
+  <button class="nav-btn" onclick="showScreen('bs')" id="nav-bs">
+    <span class="nav-icon">📒</span>B/S
+  </button>
 </nav>
 
 <!-- ============ HOME ============ -->
@@ -332,11 +335,18 @@ canvas { display: block; }
       <button class="tab-btn active" id="btab-expense" onclick="setBreakdownType('expense')">支出</button>
       <button class="tab-btn" id="btab-income" onclick="setBreakdownType('income')">収入</button>
     </div>
-    <!-- Month selector -->
+    <!-- Period mode -->
+    <div class="tabs" style="margin-bottom:10px;">
+      <button class="tab-btn active" id="bmode-day" onclick="setBdMode('day')">日</button>
+      <button class="tab-btn" id="bmode-week" onclick="setBdMode('week')">週</button>
+      <button class="tab-btn" id="bmode-month" onclick="setBdMode('month')">月</button>
+      <button class="tab-btn" id="bmode-year" onclick="setBdMode('year')">年</button>
+    </div>
+    <!-- Period selector -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-      <button class="cal-nav" onclick="moveBdMonth(-1)">‹</button>
-      <div class="cal-month" id="bd-month-label"></div>
-      <button class="cal-nav" onclick="moveBdMonth(1)">›</button>
+      <button class="cal-nav" onclick="moveBdPeriod(-1)">‹</button>
+      <div class="cal-month" id="bd-period-label"></div>
+      <button class="cal-nav" onclick="moveBdPeriod(1)">›</button>
     </div>
     <div class="pie-wrap">
       <canvas id="pie-chart" style="width:100%;max-height:200px;"></canvas>
@@ -358,6 +368,15 @@ canvas { display: block; }
     <button class="tab-btn" id="dtab-transfer" onclick="setDetailFilter('transfer')">振替</button>
   </div>
   <div id="detail-list"></div>
+</div>
+
+<!-- ============ B/S ============ -->
+<div class="screen" id="screen-bs">
+  <div class="card">
+    <div class="card-title">貸借対照表（科目別残高）</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:12px;">全期間のデータから算出</div>
+    <div id="bs-content"></div>
+  </div>
 </div>
 
 <script>
@@ -479,6 +498,7 @@ function showScreen(name) {
   if (name === 'trends') renderTrends();
   if (name === 'breakdown') renderBreakdown();
   if (name === 'detail') renderDetail();
+  if (name === 'bs') renderBS();
 }
 
 // ==================== STATE ====================
@@ -487,8 +507,8 @@ let calMonth = new Date().getMonth(); // 0-indexed
 let selectedDate = null;
 let trendsGranularity = 'day';
 let trendsRange = 30;
-let bdYear = new Date().getFullYear();
-let bdMonth = new Date().getMonth();
+let bdMode = 'month'; // day/week/month/year
+let bdDate = new Date().toISOString().slice(0, 10); // anchor date
 let bdType = 'expense';
 let detailFilter = 'all';
 
@@ -705,19 +725,49 @@ function setBreakdownType(type) {
   renderBreakdown();
 }
 
-function moveBdMonth(d) {
-  bdMonth += d;
-  if (bdMonth < 0) { bdMonth = 11; bdYear--; }
-  if (bdMonth > 11) { bdMonth = 0; bdYear++; }
+function setBdMode(mode) {
+  bdMode = mode;
+  ['day','week','month','year'].forEach(m => {
+    document.getElementById('bmode-' + m).className = 'tab-btn' + (m === mode ? ' active' : '');
+  });
   renderBreakdown();
 }
 
+function moveBdPeriod(dir) {
+  const d = new Date(bdDate + 'T12:00:00');
+  if (bdMode === 'day')        d.setDate(d.getDate() + dir);
+  else if (bdMode === 'week')  d.setDate(d.getDate() + dir * 7);
+  else if (bdMode === 'month') d.setMonth(d.getMonth() + dir);
+  else                         d.setFullYear(d.getFullYear() + dir);
+  bdDate = d.toISOString().slice(0, 10);
+  renderBreakdown();
+}
+
+function getBdRange() {
+  const d = new Date(bdDate + 'T12:00:00');
+  if (bdMode === 'day') {
+    return { from: bdDate, to: bdDate, label: `${d.getMonth()+1}/${d.getDate()}(${['日','月','火','水','木','金','土'][d.getDay()]})` };
+  } else if (bdMode === 'week') {
+    const mon = new Date(d); mon.setDate(d.getDate() - ((d.getDay()+6)%7));
+    const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+    const from = mon.toISOString().slice(0,10);
+    const to   = sun.toISOString().slice(0,10);
+    return { from, to, label: `${mon.getMonth()+1}/${mon.getDate()}〜${sun.getMonth()+1}/${sun.getDate()}` };
+  } else if (bdMode === 'month') {
+    const ym = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    return { from: ym + '-01', to: ym + '-31', label: `${d.getFullYear()}年${d.getMonth()+1}月`, prefix: ym };
+  } else {
+    const y = d.getFullYear();
+    return { from: `${y}-01-01`, to: `${y}-12-31`, label: `${y}年` };
+  }
+}
+
 function renderBreakdown() {
-  const ymKey = `${bdYear}-${String(bdMonth + 1).padStart(2, '0')}`;
-  document.getElementById('bd-month-label').textContent = `${bdYear}年${bdMonth + 1}月`;
+  const range = getBdRange();
+  document.getElementById('bd-period-label').textContent = range.label;
 
   const filtered = entries.filter(e => {
-    if (!e.date.startsWith(ymKey)) return false;
+    if (e.date < range.from || e.date > range.to) return false;
     return classify(e) === bdType;
   });
 
@@ -732,7 +782,6 @@ function renderBreakdown() {
 
   const COLORS = ['#c0603a','#5a8a6a','#3d7a9a','#b07d30','#7a6aaa','#4a8a7a','#a05a3a','#6a9a5a','#5a6a9a','#9a7a4a'];
 
-  // Pie
   const pieCanvas = document.getElementById('pie-chart');
   const pieCtx = pieCanvas.getContext('2d');
   if (pieChart) { pieChart.destroy(); pieChart = null; }
@@ -771,7 +820,6 @@ function renderBreakdown() {
     }
   });
 
-  // Category bars
   document.getElementById('cat-bar-list').innerHTML = sorted.map(([name, val], i) => {
     const pct = total ? Math.round(val / total * 100) : 0;
     const color = COLORS[i % COLORS.length];
@@ -829,6 +877,70 @@ function renderDetail() {
         </div>`;
       }).join('');
   }).join('');
+}
+
+// ==================== B/S ====================
+function renderBS() {
+  if (!entries.length) {
+    document.getElementById('bs-content').innerHTML = '<div class="empty">データなし</div>';
+    return;
+  }
+
+  // 科目ごとの借方合計・貸方合計を集計
+  const debitMap  = {}; // 科目コード -> { name, total }
+  const creditMap = {};
+  entries.forEach(e => {
+    if (!debitMap[e.debitCode])   debitMap[e.debitCode]  = { name: e.debitName,  total: 0 };
+    if (!creditMap[e.creditCode]) creditMap[e.creditCode] = { name: e.creditName, total: 0 };
+    debitMap[e.debitCode].total  += e.amount;
+    creditMap[e.creditCode].total += e.amount;
+  });
+
+  // 残高 = 借方合計 - 貸方合計（科目コードで正規化）
+  const allCodes = new Set([...Object.keys(debitMap).map(Number), ...Object.keys(creditMap).map(Number)]);
+  const balances = {};
+  allCodes.forEach(code => {
+    const name = debitMap[code]?.name || creditMap[code]?.name || `科目${code}`;
+    const dr = debitMap[code]?.total  || 0;
+    const cr = creditMap[code]?.total || 0;
+    balances[code] = { name, dr, cr, net: dr - cr };
+  });
+
+  // 科目コードで分類
+  // 1xx: 資産, 2xx: 負債, 3xx: 純資産, 4xx: 収益, 5xx: 費用
+  const sections = [
+    { label: '資産', codes: [1], color: 'var(--accent2)' },
+    { label: '負債', codes: [2], color: 'var(--accent3)' },
+    { label: '純資産', codes: [3], color: 'var(--purple)' },
+    { label: '収益累計', codes: [4], color: 'var(--accent)' },
+    { label: '費用累計', codes: [5], color: 'var(--yellow)' },
+  ];
+
+  let html = '';
+  sections.forEach(sec => {
+    const items = [...allCodes]
+      .filter(c => sec.codes.includes(Math.floor(c / 100)))
+      .map(c => ({ code: c, ...balances[c] }))
+      .filter(i => i.net !== 0)
+      .sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
+    if (!items.length) return;
+    const secTotal = items.reduce((s, i) => s + i.net, 0);
+    html += `<div style="margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:2px solid ${sec.color};margin-bottom:6px;">
+        <span style="font-size:12px;font-weight:700;color:${sec.color};">${sec.label}</span>
+        <span style="font-family:'Space Mono',monospace;font-size:13px;font-weight:700;color:${sec.color};">¥${Math.abs(secTotal).toLocaleString()}</span>
+      </div>`;
+    items.forEach(i => {
+      const sign = i.net >= 0 ? '' : '-';
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;border-bottom:1px solid var(--border);">
+        <span style="font-size:12px;color:var(--text);">${i.name}</span>
+        <span style="font-family:'Space Mono',monospace;font-size:12px;color:var(--text2);">${sign}¥${Math.abs(i.net).toLocaleString()}</span>
+      </div>`;
+    });
+    html += `</div>`;
+  });
+
+  document.getElementById('bs-content').innerHTML = html;
 }
 
 // ==================== IMPORT ====================
