@@ -374,7 +374,14 @@ canvas { display: block; }
 <div class="screen" id="screen-bs">
   <div class="card">
     <div class="card-title">貸借対照表（科目別残高）</div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:12px;">全期間のデータから算出</div>
+    <div class="range-row" style="margin-bottom:12px;">
+      <button class="range-btn" data-bs="30" onclick="setBsRange(30)">1ヶ月</button>
+      <button class="range-btn" data-bs="90" onclick="setBsRange(90)">3ヶ月</button>
+      <button class="range-btn" data-bs="180" onclick="setBsRange(180)">半年</button>
+      <button class="range-btn" data-bs="365" onclick="setBsRange(365)">1年</button>
+      <button class="range-btn active" data-bs="0" onclick="setBsRange(0)">全期間</button>
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:12px;" id="bs-range-label"></div>
     <div id="bs-content"></div>
   </div>
 </div>
@@ -511,6 +518,7 @@ let bdMode = 'month'; // day/week/month/year
 let bdDate = new Date().toISOString().slice(0, 10); // anchor date
 let bdType = 'expense';
 let detailFilter = 'all';
+let bsRange = 0; // 0=全期間, 30/90/180/365=日数
 
 // ==================== HOME ====================
 function renderHome() {
@@ -880,23 +888,42 @@ function renderDetail() {
 }
 
 // ==================== B/S ====================
+function setBsRange(r) {
+  bsRange = r;
+  document.querySelectorAll('[data-bs]').forEach(b => {
+    b.classList.toggle('active', b.dataset.bs === String(r));
+  });
+  renderBS();
+}
+
 function renderBS() {
   if (!entries.length) {
     document.getElementById('bs-content').innerHTML = '<div class="empty">データなし</div>';
     return;
   }
 
+  // 期間フィルター
+  let cutoff = '0000-00-00';
+  let rangeLabel = '全期間';
+  if (bsRange > 0) {
+    const d = new Date(); d.setDate(d.getDate() - bsRange);
+    cutoff = d.toISOString().slice(0, 10);
+    rangeLabel = cutoff.replace(/-/g,'/') + ' 〜 今日';
+  }
+  document.getElementById('bs-range-label').textContent = rangeLabel;
+
+  const target = entries.filter(e => e.date >= cutoff);
+
   // 科目ごとの借方合計・貸方合計を集計
-  const debitMap  = {}; // 科目コード -> { name, total }
+  const debitMap  = {};
   const creditMap = {};
-  entries.forEach(e => {
+  target.forEach(e => {
     if (!debitMap[e.debitCode])   debitMap[e.debitCode]  = { name: e.debitName,  total: 0 };
     if (!creditMap[e.creditCode]) creditMap[e.creditCode] = { name: e.creditName, total: 0 };
     debitMap[e.debitCode].total  += e.amount;
     creditMap[e.creditCode].total += e.amount;
   });
 
-  // 残高 = 借方合計 - 貸方合計（科目コードで正規化）
   const allCodes = new Set([...Object.keys(debitMap).map(Number), ...Object.keys(creditMap).map(Number)]);
   const balances = {};
   allCodes.forEach(code => {
@@ -906,8 +933,6 @@ function renderBS() {
     balances[code] = { name, dr, cr, net: dr - cr };
   });
 
-  // 科目コードで分類
-  // 1xx: 資産, 2xx: 負債, 3xx: 純資産, 4xx: 収益, 5xx: 費用
   const sections = [
     { label: '資産', codes: [1], color: 'var(--accent2)' },
     { label: '負債', codes: [2], color: 'var(--accent3)' },
@@ -940,7 +965,7 @@ function renderBS() {
     html += `</div>`;
   });
 
-  document.getElementById('bs-content').innerHTML = html;
+  document.getElementById('bs-content').innerHTML = html || '<div class="empty">該当データなし</div>';
 }
 
 // ==================== IMPORT ====================
