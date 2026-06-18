@@ -7,7 +7,7 @@
 <meta name="theme-color" content="#f5f3ef">
 <link rel="manifest" href="./manifest.json">
 <link rel="apple-touch-icon" href="./icon-192.png">
-<title>家計簿ビューア</title>
+<title>家計簿</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap');
@@ -299,7 +299,7 @@ canvas { display: block; }
 
 <div class="header">
   <div>
-    <div class="header-title">家計簿ビューア</div>
+    <div class="header-title">家計簿</div>
     <div style="font-size:11px;color:var(--text3);margin-top:2px;" id="data-range"></div>
   </div>
   <div class="header-right">
@@ -439,10 +439,10 @@ canvas { display: block; }
   <div class="card">
     <div class="card-title">貸借対照表（科目別残高）</div>
     <div class="range-row" style="margin-bottom:12px;">
-      <button class="range-btn" data-bs="30" onclick="setBsRange(30)">1ヶ月</button>
-      <button class="range-btn" data-bs="90" onclick="setBsRange(90)">3ヶ月</button>
-      <button class="range-btn" data-bs="180" onclick="setBsRange(180)">半年</button>
-      <button class="range-btn" data-bs="365" onclick="setBsRange(365)">1年</button>
+      <button class="range-btn" data-bs="1" onclick="setBsRange(1)">1ヶ月</button>
+      <button class="range-btn" data-bs="3" onclick="setBsRange(3)">3ヶ月</button>
+      <button class="range-btn" data-bs="6" onclick="setBsRange(6)">半年</button>
+      <button class="range-btn" data-bs="12" onclick="setBsRange(12)">1年</button>
       <button class="range-btn active" data-bs="0" onclick="setBsRange(0)">全期間</button>
     </div>
     <div style="font-size:11px;color:var(--text3);margin-bottom:12px;" id="bs-range-label"></div>
@@ -582,7 +582,7 @@ let bdMode = 'month'; // day/week/month/year
 let bdDate = new Date().toISOString().slice(0, 10); // anchor date
 let bdType = 'expense';
 let detailFilter = 'all';
-let bsRange = 0; // 0=全期間, 30/90/180/365=日数
+let bsRange = 0; // 0=全期間, n=nヶ月（月締め）
 
 // ==================== HOME ====================
 function renderHome() {
@@ -1127,23 +1127,30 @@ function setBsRange(r) {
   renderBS();
 }
 
+function getBsDateRange(months) {
+  const today = new Date();
+  // 当月末（今月末）
+  const toDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  const to = toDate.toISOString().slice(0, 10);
+  if (months === 0) return { from: '0000-00-00', to, label: '全期間〜' + to.replace(/-/g,'/') };
+  // n ヶ月前の月初
+  const fromDate = new Date(today.getFullYear(), today.getMonth() - months + 1, 1);
+  const from = fromDate.toISOString().slice(0, 10);
+  const label = from.slice(0,7).replace('-','/') + ' 〜 ' + to.slice(0,7).replace('-','/');
+  return { from, to, label };
+}
+
 function renderBS() {
   if (!entries.length) {
     document.getElementById('bs-content').innerHTML = '<div class="empty">データなし</div>';
     return;
   }
 
-  // 期間フィルター
-  let cutoff = '0000-00-00';
-  let rangeLabel = '全期間';
-  if (bsRange > 0) {
-    const d = new Date(); d.setDate(d.getDate() - bsRange);
-    cutoff = d.toISOString().slice(0, 10);
-    rangeLabel = cutoff.replace(/-/g,'/') + ' 〜 今日';
-  }
-  document.getElementById('bs-range-label').textContent = rangeLabel;
+  const { from, to, label } = getBsDateRange(bsRange);
+  document.getElementById('bs-range-label').textContent = label;
+  const cutoff = from;
 
-  const target = entries.filter(e => e.date >= cutoff);
+  const target = entries.filter(e => e.date >= cutoff && e.date <= to);
 
   // 科目ごとの借方合計・貸方合計を集計
   const debitMap  = {};
