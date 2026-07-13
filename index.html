@@ -543,6 +543,10 @@ function getCategory(e) {
 }
 
 // ==================== UTILS ====================
+function localDateStr(d) {
+  d = d || new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
 function fmt(n) {
   return '¥' + Math.abs(n).toLocaleString();
 }
@@ -577,7 +581,7 @@ let selectedDate = null;
 let trendsGranularity = 'day';
 let trendsRange = 30;
 let bdMode = 'month'; // day/week/month/year
-let bdDate = new Date().toISOString().slice(0, 10); // anchor date
+let bdDate = localDateStr(); // anchor date
 let bdType = 'expense';
 let detailFilter = 'all';
 let bsRange = 0; // 0=全期間, n=nヶ月（月締め）
@@ -625,7 +629,7 @@ function renderCalendar(ymKey, monthEntries) {
 
   const firstDay = new Date(calYear, calMonth, 1).getDay();
   const lastDate = new Date(calYear, calMonth + 1, 0).getDate();
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localDateStr();
 
   let html = '';
   for (let i = 0; i < firstDay; i++) html += '<div class="cal-day empty"></div>';
@@ -727,7 +731,7 @@ function renderTrends() {
 
   const cutoff = trendsRange > 0 ? (() => {
     const d = new Date(); d.setDate(d.getDate() - trendsRange);
-    return d.toISOString().slice(0, 10);
+    return localDateStr(d);
   })() : '0000-00-00';
 
   sorted.forEach(e => {
@@ -737,7 +741,7 @@ function renderTrends() {
     else if (trendsGranularity === 'week') {
       const d = new Date(e.date + 'T12:00:00');
       const mon = new Date(d); mon.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-      key = mon.toISOString().slice(0, 10);
+      key = localDateStr(mon);
     } else if (trendsGranularity === 'month') key = e.date.slice(0, 7);
     else key = e.date.slice(0, 4);
 
@@ -809,7 +813,7 @@ function moveBdPeriod(dir) {
   else if (bdMode === 'week')  d.setDate(d.getDate() + dir * 7);
   else if (bdMode === 'month') d.setMonth(d.getMonth() + dir);
   else                         d.setFullYear(d.getFullYear() + dir);
-  bdDate = d.toISOString().slice(0, 10);
+  bdDate = localDateStr(d);
   renderBreakdown();
 }
 
@@ -820,8 +824,8 @@ function getBdRange() {
   } else if (bdMode === 'week') {
     const mon = new Date(d); mon.setDate(d.getDate() - ((d.getDay()+6)%7));
     const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
-    const from = mon.toISOString().slice(0,10);
-    const to   = sun.toISOString().slice(0,10);
+    const from = localDateStr(mon);
+    const to   = localDateStr(sun);
     return { from, to, label: `${mon.getMonth()+1}/${mon.getDate()}〜${sun.getMonth()+1}/${sun.getDate()}` };
   } else if (bdMode === 'month') {
     const ym = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
@@ -1021,7 +1025,7 @@ function openAddModal() {
   document.getElementById('add-type-expense').className = 'add-type-btn expense active';
   document.getElementById('add-type-income').className  = 'add-type-btn income';
   // カレンダーで日付選択中ならその日付、なければ今日
-  document.getElementById('add-date').value   = selectedDate || new Date().toISOString().slice(0,10);
+  document.getElementById('add-date').value   = selectedDate || localDateStr();
   document.getElementById('add-amount').value = '';
   document.getElementById('add-memo').value   = '';
   renderAddCatChips();
@@ -1130,11 +1134,11 @@ function getBsDateRange(months) {
   const today = new Date();
   // 当月末（今月末）
   const toDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-  const to = toDate.toISOString().slice(0, 10);
+  const to = localDateStr(toDate);
   if (months === 0) return { from: '0000-00-00', to, label: '全期間〜' + to.replace(/-/g,'/') };
   // n ヶ月前の月初
   const fromDate = new Date(today.getFullYear(), today.getMonth() - months + 1, 1);
-  const from = fromDate.toISOString().slice(0, 10);
+  const from = localDateStr(fromDate);
   const label = from.slice(0,7).replace('-','/') + ' 〜 ' + to.slice(0,7).replace('-','/');
   return { from, to, label };
 }
