@@ -286,6 +286,15 @@ canvas { display: block; }
 .cat-chip.selected { background: var(--accent); color: #fff; border-color: var(--accent); }
 .cat-chip.income-chip.selected { background: var(--accent2); border-color: var(--accent2); }
 
+select.modal-input {
+  -webkit-appearance: none; appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text3) 50%), linear-gradient(135deg, var(--text3) 50%, transparent 50%);
+  background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%;
+  background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
+  padding-right: 30px;
+}
+.cat-chip-add { border-style: dashed; color: var(--text3); background: transparent; }
+
 /* 入力モーダルタブ */
 .add-type-row { display: flex; background: var(--bg3); border-radius: 10px; padding: 3px; margin-bottom: 14px; }
 .add-type-btn { flex: 1; padding: 8px; border: none; background: none; font-family: 'Noto Sans JP', sans-serif; font-size: 13px; border-radius: 8px; cursor: pointer; color: var(--text2); }
@@ -429,6 +438,7 @@ canvas { display: block; }
     <button class="tab-btn" id="dtab-income" onclick="setDetailFilter('income')">収入</button>
     <button class="tab-btn" id="dtab-transfer" onclick="setDetailFilter('transfer')">振替</button>
   </div>
+  <div id="conflict-banner" style="display:none;background:#fdf3e7;border:1px solid #e9c99a;color:#7a5520;border-radius:12px;padding:12px 14px;margin-bottom:10px;font-size:12px;line-height:1.6;"></div>
   <div id="detail-list"></div>
 </div>
 
@@ -914,13 +924,30 @@ function setDetailFilter(f) {
   renderDetail();
 }
 
+function renderConflictBanner() {
+  const box = document.getElementById('conflict-banner');
+  if (!box) return;
+  const cf = getConflicts();
+  const names = Object.keys(cf);
+  if (!names.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = 'block';
+  box.innerHTML = `<div style="font-weight:700;margin-bottom:4px;">科目マスタにない科目があります</div>
+    <div style="margin-bottom:6px;">自動では判断できないため、どの科目に寄せるか選び直してください。タップで絞り込み → 各仕訳を開いて科目を選択。</div>
+    <div class="cat-chips">${names.map(n => `<button class="cat-chip" onclick="filterByAccountName('${n.replace(/'/g, "\\'")}')">${n}（${cf[n]}件）</button>`).join('')}</div>`;
+}
+function filterByAccountName(n) {
+  document.getElementById('search-input').value = n;
+  setDetailFilter('all');
+}
+
 function renderDetail() {
   const q = document.getElementById('search-input').value.toLowerCase();
   let filtered = [...entries].sort((a, b) => b.date.localeCompare(a.date));
 
   if (detailFilter !== 'all') filtered = filtered.filter(e => classify(e) === detailFilter);
-  if (q) filtered = filtered.filter(e => e.memo.toLowerCase().includes(q) || getCategory(e).toLowerCase().includes(q));
+  if (q) filtered = filtered.filter(e => (e.memo||'').toLowerCase().includes(q) || getCategory(e).toLowerCase().includes(q) || (e.debitName||'').toLowerCase().includes(q) || (e.creditName||'').toLowerCase().includes(q));
 
+  renderConflictBanner();
   const list = document.getElementById('detail-list');
   if (!filtered.length) { list.innerHTML = '<div class="empty">該当なし</div>'; return; }
 
@@ -957,62 +984,202 @@ function renderDetail() {
   }).join('');
 }
 
-// ==================== ADD MODAL ====================
-let addType = 'expense';
+// ==================== ACCOUNT MASTER ====================
+// 複式家計簿の kamoku.csv を正とする科目マスタ。追加・編集はすべてここから選ぶ。
+const BASE_ACCOUNTS = [
+  [101,'現金'],[102,'預金'],[103,'証券口座'],[104,'ポイント'],[105,'棚卸資産'],[106,'有価証券'],[107,'固定資産'],[108,'人'],
+  [201,'クレジット'],[202,'借入金'],
+  [301,'開始残高'],[302,'剰余金'],
+  [401,'給料'],[402,'お小遣い'],[403,'受取利息'],[404,'投資損益'],[405,'雑収入'],
+  [501,'食費'],[502,'趣味・娯楽費'],[503,'交際費'],[504,'交通費'],[505,'水道光熱費'],[506,'通信費'],
+  [507,'美容・被服費'],[508,'住居費'],[509,'教育費'],[510,'医療・健康費'],[511,'新聞・書籍代'],
+  [512,'手数料'],[513,'税金'],[514,'減価償却費'],[515,'雑費'],
+  [901,'諸口']
+];
+const ACCOUNT_GROUPS = [
+  { key:'asset',   label:'資産',   min:100, max:199 },
+  { key:'liab',    label:'負債',   min:200, max:299 },
+  { key:'equity',  label:'純資産', min:300, max:399 },
+  { key:'income',  label:'収益',   min:400, max:499 },
+  { key:'expense', label:'費用',   min:500, max:599 },
+  { key:'other',   label:'その他', min:600, max:999 },
+];
+// 以前の＋ボタンが付けていた誤った名前 → 正しいコード
+const ACCOUNT_ALIASES = { '普通預金':102 };
 
-// エントリから科目一覧を動的に生成
-function getKnownCategories(type) {
-  const map = {};
-  entries.forEach(e => {
-    const t = classify(e);
-    if (t !== type) return;
-    const name = type === 'expense' ? e.debitName  : e.creditName;
-    const code = type === 'expense' ? e.debitCode  : e.creditCode;
-    const peerName = type === 'expense' ? e.creditName : e.debitName;
-    const peerCode = type === 'expense' ? e.creditCode : e.debitCode;
-    if (!map[name]) map[name] = { code, peerName, peerCode };
-  });
-  return map;
+function normName(s) { return (s || '').normalize('NFKC').replace(/\s+/g, ''); }
+
+function loadCustomAccounts() {
+  try { return JSON.parse(localStorage.getItem('kakeibo_accounts_custom') || '[]'); } catch(e) { return []; }
+}
+function saveCustomAccounts(list) {
+  try { localStorage.setItem('kakeibo_accounts_custom', JSON.stringify(list)); } catch(e) {}
 }
 
-// デフォルト科目（CSVデータがない初期状態用）
-const DEFAULT_CATS = {
-  expense: [
-    { name:'食費',     code:501, peerName:'現金', peerCode:101 },
-    { name:'日用品',   code:502, peerName:'現金', peerCode:101 },
-    { name:'交通費',   code:503, peerName:'現金', peerCode:101 },
-    { name:'外食費',   code:504, peerName:'現金', peerCode:101 },
-    { name:'娯楽費',   code:505, peerName:'現金', peerCode:101 },
-    { name:'医療費',   code:506, peerName:'現金', peerCode:101 },
-    { name:'通信費',   code:507, peerName:'現金', peerCode:101 },
-    { name:'衣服費',   code:508, peerName:'現金', peerCode:101 },
-  ],
-  income: [
-    { name:'給料',     code:401, peerName:'普通預金', peerCode:102 },
-    { name:'お小遣い', code:402, peerName:'現金',     peerCode:101 },
-    { name:'雑収入',   code:403, peerName:'現金',     peerCode:101 },
-  ]
-};
+// code -> name（マスタ＋ユーザー追加科目）
+function getAccountMap() {
+  const m = {};
+  BASE_ACCOUNTS.forEach(([code, name]) => { m[code] = name; });
+  loadCustomAccounts().forEach(a => { if (!(a.code in m)) m[a.code] = a.name; });
+  return m;
+}
+function accountName(code) { return getAccountMap()[code] || ('科目' + code); }
+function groupOf(code) { return ACCOUNT_GROUPS.find(g => code >= g.min && code <= g.max) || ACCOUNT_GROUPS[5]; }
+function findCodeByName(name) {
+  const n = normName(name);
+  const m = getAccountMap();
+  for (const code in m) if (normName(m[code]) === n) return parseInt(code);
+  if (name in ACCOUNT_ALIASES) return ACCOUNT_ALIASES[name];
+  return null;
+}
+
+// 新しい科目を意図的に作る（表記ゆれ防止のため既存名と照合してから）
+function createAccount(groupKey, presetName) {
+  const g = ACCOUNT_GROUPS.find(x => x.key === groupKey);
+  const raw = presetName !== undefined ? presetName : prompt(`「${g.label}」に追加する科目名`);
+  if (raw === null) return null;
+  const name = raw.trim();
+  if (!name) return null;
+  const existing = findCodeByName(name);
+  if (existing !== null) {
+    showToast(`「${accountName(existing)}」が既にあります。そちらを使います`);
+    return existing;
+  }
+  const m = getAccountMap();
+  let code = g.min + 1;
+  while (code in m && code <= g.max) code++;
+  if (code > g.max) { showToast('この区分にはこれ以上追加できません'); return null; }
+  const list = loadCustomAccounts();
+  list.push({ code, name });
+  saveCustomAccounts(list);
+  showToast(`科目「${name}」を追加しました`);
+  return code;
+}
+
+// 起動時: 名前が明確に特定できる不整合だけ自動修正（以前の＋ボタンのバグ分）
+function reconcileAccounts() {
+  let fixed = 0;
+  entries.forEach(e => {
+    ['debit', 'credit'].forEach(side => {
+      const nameKey = side + 'Name', codeKey = side + 'Code';
+      const byName = findCodeByName(e[nameKey]);
+      if (byName === null) return;                       // マスタにない名前 → 判断保留（明細で警告）
+      const correctName = accountName(byName);
+      if (e[codeKey] !== byName || e[nameKey] !== correctName) {
+        e[codeKey] = byName; e[nameKey] = correctName; fixed++;
+      }
+    });
+  });
+  if (fixed) {
+    try { localStorage.setItem('kakeibo_entries', JSON.stringify(entries)); } catch(e) {}
+    setTimeout(() => showToast(`科目の表記ずれを ${fixed} 件修正しました`), 600);
+  }
+  return fixed;
+}
+
+// マスタと食い違い、自動では決められない仕訳（コードは別科目、名前はマスタにない）
+function isAccountConflict(code, name) {
+  const m = getAccountMap();
+  return (code in m) && normName(m[code]) !== normName(name) && findCodeByName(name) === null;
+}
+function getConflicts() {
+  const counts = {};
+  entries.forEach(e => {
+    [['debitCode','debitName'],['creditCode','creditName']].forEach(([ck, nk]) => {
+      if (isAccountConflict(e[ck], e[nk])) {
+        const k = e[nk];
+        counts[k] = (counts[k] || 0) + 1;
+      }
+    });
+  });
+  return counts;
+}
+
+// 科目の使用頻度（よく使う科目を前に出すため）
+function accountUsage() {
+  const u = {};
+  entries.forEach(e => { u[e.debitCode] = (u[e.debitCode]||0)+1; u[e.creditCode] = (u[e.creditCode]||0)+1; });
+  return u;
+}
+
+// <select> を区分ごとに組み立てる
+function buildAccountSelect(sel, currentCode, currentName, groupKeys) {
+  const m = getAccountMap();
+  const keys = groupKeys || ACCOUNT_GROUPS.map(g => g.key);
+  let html = '';
+  if (currentName !== undefined && isAccountConflict(currentCode, currentName)) {
+    html += `<option value="keep" selected>（要修正）${currentName}</option>`;
+  }
+  keys.forEach(k => {
+    const g = ACCOUNT_GROUPS.find(x => x.key === k);
+    const codes = Object.keys(m).map(Number).filter(c => c >= g.min && c <= g.max).sort((a,b)=>a-b);
+    html += `<optgroup label="${g.label}">`;
+    codes.forEach(code => {
+      const s = (code === currentCode && !html.includes('value="keep"')) ? ' selected' : '';
+      html += `<option value="${code}"${s}>${m[code]}</option>`;
+    });
+    html += `<option value="new:${g.key}">＋ ${g.label}に科目を追加…</option></optgroup>`;
+  });
+  sel.innerHTML = html;
+  sel.dataset.prev = sel.value;
+}
+
+function onAccountSelectChange(sel) {
+  if (!sel.value.startsWith('new:')) { sel.dataset.prev = sel.value; return; }
+  const code = createAccount(sel.value.slice(4));
+  // 新科目をすべての科目セレクトに反映
+  document.querySelectorAll('select.acct-select').forEach(s => {
+    const keep = s === sel ? (code !== null ? String(code) : s.dataset.prev) : s.value;
+    const curName = s.dataset.origName;
+    buildAccountSelect(s, parseInt(keep), keep === 'keep' ? curName : undefined, s.dataset.groups ? s.dataset.groups.split(',') : undefined);
+    s.value = keep;
+    s.dataset.prev = s.value;
+  });
+}
+
+// ==================== ADD MODAL ====================
+let addType = 'expense';
 
 function setAddType(type) {
   addType = type;
   document.getElementById('add-type-expense').className = 'add-type-btn expense' + (type==='expense'?' active':'');
   document.getElementById('add-type-income').className  = 'add-type-btn income'  + (type==='income' ?' active':'');
   renderAddCatChips();
+  renderAddPeerSelect();
 }
 
-function renderAddCatChips() {
-  const known = getKnownCategories(addType);
-  let cats;
-  if (Object.keys(known).length > 0) {
-    cats = Object.entries(known).map(([name, v]) => ({ name, ...v }));
-  } else {
-    cats = DEFAULT_CATS[addType];
-  }
+// 科目チップ: マスタの費用 or 収益科目を、よく使う順に
+function renderAddCatChips(selectCode) {
+  const g = ACCOUNT_GROUPS.find(x => x.key === addType);
+  const m = getAccountMap();
+  const u = accountUsage();
+  const codes = Object.keys(m).map(Number).filter(c => c >= g.min && c <= g.max)
+    .sort((a, b) => (u[b]||0) - (u[a]||0) || a - b);
   const chips = document.getElementById('add-cat-chips');
-  chips.innerHTML = cats.map(c =>
-    `<button class="cat-chip${addType==='income'?' income-chip':''}" data-name="${c.name}" data-code="${c.code}" data-peer-name="${c.peerName}" data-peer-code="${c.peerCode}" onclick="selectCatChip(this)">${c.name}</button>`
-  ).join('');
+  chips.innerHTML = codes.map(code =>
+    `<button class="cat-chip${addType==='income'?' income-chip':''}${code===selectCode?' selected':''}" data-code="${code}" onclick="selectCatChip(this)">${m[code]}</button>`
+  ).join('') + `<button class="cat-chip cat-chip-add" onclick="addCatFromChip()">＋ 科目追加</button>`;
+}
+
+function addCatFromChip() {
+  const code = createAccount(addType);
+  if (code !== null) renderAddCatChips(code);
+}
+
+// 支払元／入金先: 資産・負債科目。直近の同種仕訳で使ったものを初期値に
+function renderAddPeerSelect() {
+  const sel = document.getElementById('add-peer');
+  const lbl = document.getElementById('add-peer-label');
+  lbl.textContent = addType === 'expense' ? '支払元' : '入金先';
+  let def = addType === 'expense' ? 101 : 102;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i];
+    if (classify(e) !== addType) continue;
+    const peer = addType === 'expense' ? e.creditCode : e.debitCode;
+    if (peer < 300) { def = peer; break; }
+  }
+  sel.dataset.groups = 'asset,liab';
+  buildAccountSelect(sel, def, undefined, ['asset','liab']);
 }
 
 function selectCatChip(el) {
@@ -1029,6 +1196,7 @@ function openAddModal() {
   document.getElementById('add-amount').value = '';
   document.getElementById('add-memo').value   = '';
   renderAddCatChips();
+  renderAddPeerSelect();
   document.getElementById('add-modal-overlay').classList.add('show');
   setTimeout(() => document.getElementById('add-amount').focus(), 300);
 }
@@ -1048,10 +1216,12 @@ function submitAdd() {
   if (!amount) { showToast('金額を入力してください'); return; }
   if (!chip)   { showToast('科目を選択してください'); return; }
 
-  const catName   = chip.dataset.name;
   const catCode   = parseInt(chip.dataset.code);
-  const peerName  = chip.dataset.peerName;
-  const peerCode  = parseInt(chip.dataset.peerCode);
+  const catName   = accountName(catCode);
+  const peerVal   = document.getElementById('add-peer').value;
+  if (!/^\d+$/.test(peerVal)) { showToast('支払元を選択してください'); return; }
+  const peerCode  = parseInt(peerVal);
+  const peerName  = accountName(peerCode);
 
   let entry;
   if (addType === 'expense') {
@@ -1079,8 +1249,12 @@ function openEditModal(idx) {
   document.getElementById('edit-date').value        = e.date;
   document.getElementById('edit-memo').value        = e.memo || '';
   document.getElementById('edit-amount').value      = e.amount;
-  document.getElementById('edit-debit-name').value  = e.debitName;
-  document.getElementById('edit-credit-name').value = e.creditName;
+  const dSel = document.getElementById('edit-debit');
+  const cSel = document.getElementById('edit-credit');
+  dSel.dataset.origName = e.debitName;
+  cSel.dataset.origName = e.creditName;
+  buildAccountSelect(dSel, e.debitCode, e.debitName);
+  buildAccountSelect(cSel, e.creditCode, e.creditName);
   document.getElementById('edit-modal-overlay').classList.add('show');
 }
 
@@ -1096,8 +1270,12 @@ function saveEntry() {
   e.date        = document.getElementById('edit-date').value;
   e.memo        = document.getElementById('edit-memo').value;
   e.amount      = parseInt(document.getElementById('edit-amount').value) || 0;
-  e.debitName   = document.getElementById('edit-debit-name').value;
-  e.creditName  = document.getElementById('edit-credit-name').value;
+  const dv = document.getElementById('edit-debit').value;
+  const cv = document.getElementById('edit-credit').value;
+  if (dv.startsWith('new:') || cv.startsWith('new:')) { showToast('科目を選択してください'); return; }
+  if (dv === cv && dv !== 'keep') { showToast('借方と貸方が同じ科目です'); return; }
+  if (dv !== 'keep') { e.debitCode  = parseInt(dv); e.debitName  = accountName(e.debitCode); }
+  if (cv !== 'keep') { e.creditCode = parseInt(cv); e.creditName = accountName(e.creditCode); }
   entries.sort((a, b) => a.date.localeCompare(b.date));
   localStorage.setItem('kakeibo_entries', JSON.stringify(entries));
   document.getElementById('edit-modal-overlay').classList.remove('show');
@@ -1254,6 +1432,7 @@ function handleImport() {
         }
       });
     }
+    reconcileAccounts();
     entries.sort((a, b) => a.date.localeCompare(b.date));
     localStorage.setItem('kakeibo_entries', JSON.stringify(entries));
     updateDataRange();
@@ -1280,6 +1459,7 @@ function updateDataRange() {
 
 // ==================== INIT ====================
 function init() {
+  reconcileAccounts();
   updateDataRange();
   renderHome();
 }
@@ -1304,6 +1484,10 @@ init();
     <div class="modal-field">
       <div class="modal-label">科目</div>
       <div class="cat-chips" id="add-cat-chips"></div>
+    </div>
+    <div class="modal-field">
+      <div class="modal-label" id="add-peer-label">支払元</div>
+      <select class="modal-input acct-select" id="add-peer" onchange="onAccountSelectChange(this)"></select>
     </div>
     <div class="modal-field">
       <div class="modal-label">摘要（任意）</div>
@@ -1335,11 +1519,11 @@ init();
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
       <div class="modal-field">
         <div class="modal-label">借方科目</div>
-        <input class="modal-input" type="text" id="edit-debit-name" placeholder="借方科目名">
+        <select class="modal-input acct-select" id="edit-debit" onchange="onAccountSelectChange(this)"></select>
       </div>
       <div class="modal-field">
         <div class="modal-label">貸方科目</div>
-        <input class="modal-input" type="text" id="edit-credit-name" placeholder="貸方科目名">
+        <select class="modal-input acct-select" id="edit-credit" onchange="onAccountSelectChange(this)"></select>
       </div>
     </div>
     <div class="modal-row">
